@@ -1,0 +1,6 @@
+{
+  "name": "Doubao Speech to Text",
+  "render_readme": true,
+  "domains": ["stt"],
+  "country": ["CN"]
+}

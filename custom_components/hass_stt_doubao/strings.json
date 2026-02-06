@@ -1,0 +1,33 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "配置 Doubao 语音识别",
+        "description": "设置 Doubao STT 集成",
+        "data": {
+          "credential_path": "凭据文件路径",
+          "enable_punctuation": "启用标点符号"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "无法连接到 Doubao 服务，请检查网络连接或凭据配置",
+      "unknown": "发生未知错误"
+    },
+    "abort": {
+      "already_configured": "该设备已经配置过了"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Doubao STT 选项",
+        "description": "修改 Doubao STT 配置选项",
+        "data": {
+          "credential_path": "凭据文件路径",
+          "enable_punctuation": "启用标点符号"
+        }
+      }
+    }
+  }
+}
