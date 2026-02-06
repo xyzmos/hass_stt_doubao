@@ -30,7 +30,7 @@
 ### 方法 2: HACS 安装（推荐）
 
 1. 确保你已经在 Home Assistant 中安装并配置了 HACS（Home Assistant Community Store）。
-2. 点击 HACS 界面左上角的菜单，选择 自定义仓库（Custom repositories），在弹出的窗口中输入仓库地址 https://github.com/xyzmos/hass_stt_doubao，类别选择 集成，然后点击 添加。之后再搜索 "Doubao STT" 并安装。
+2. 点击 HACS 界面左上角的菜单，选择 自定义仓库（Custom repositories），在弹出的窗口中输入仓库地址`https://github.com/xyzmos/hass_stt_doubao`，类别选择`集成`，然后点击 `添加`。之后再搜索 "Doubao STT" 并安装。
 3. 重启 Home Assistant
 
 ## 配置
