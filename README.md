@@ -2,6 +2,10 @@
 
 豆包语音识别 Home Assistant 集成插件，基于 [doubaoime-asr](https://github.com/starccy/doubaoime-asr) 开发。
 
+## 问题反馈
+
+[HomeAssistant 豆包输入法 STT 语音识别插件
+反馈](https://bbs.nextrt.com/d/3-homeassistant-dou-bao-shu-ru-fa-stt-yu-yin-shi-bie-cha-jian)
 
 ## 功能特性
 
