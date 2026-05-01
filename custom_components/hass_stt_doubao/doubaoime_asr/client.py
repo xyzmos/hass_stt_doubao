@@ -35,9 +35,10 @@ class DoubaoASR:
     def __init__(self, config: Optional[ASRConfig] = None):
         self.config = config
         self._encoder = AudioEncoder(self.config)
-        self._ssl_context = ssl.create_default_context()
+        self._ssl_context: Optional[ssl.SSLContext] = None
 
     async def __aenter__(self) -> DoubaoASR:
+        self._ssl_context = await asyncio.to_thread(ssl.create_default_context)
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
