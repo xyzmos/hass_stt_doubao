@@ -26,38 +26,27 @@ _LOGGER = logging.getLogger(__name__)
 async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
     """Validate the user input allows us to connect.
     
-    Data has the keys from STEP_USER_DATA_SCHEMA with values provided by the user.
+    Only checks that the credential file exists and is valid JSON if provided.
+    Does NOT register a device or perform network I/O.
+    Actual credential initialization is deferred to the first transcribe call.
     """
-    from .doubaoime_asr import ASRConfig, DoubaoASR, ASRError
+    import json as json_module
     
     credential_path = data.get(CONF_CREDENTIAL_PATH, DEFAULT_CREDENTIAL_PATH)
     enable_punctuation = data.get(CONF_ENABLE_PUNCTUATION, DEFAULT_ENABLE_PUNCTUATION)
     
-    # 将相对路径转换为 Home Assistant 配置目录下的绝对路径
     if not Path(credential_path).is_absolute():
         credential_path = hass.config.path(credential_path)
     
-    # 尝试初始化配置并验证凭据
-    try:
-        config = ASRConfig(
-            credential_path=credential_path,
-            enable_punctuation=enable_punctuation,
-        )
-        # 确保凭据已初始化（会自动注册设备如果需要）
-        await config.async_ensure_credentials()
-        
-        # 简单验证：检查是否成功获取了 device_id 和 token
-        if not config.device_id or not config.token:
-            raise CannotConnect("无法获取设备凭据")
-            
-    except ASRError as err:
-        _LOGGER.error("验证 Doubao STT 配置失败: %s", err)
-        raise CannotConnect(str(err)) from err
-    except Exception as err:
-        _LOGGER.exception("验证 Doubao STT 配置时发生未知错误")
-        raise CannotConnect(str(err)) from err
+    cred_path = Path(credential_path)
+    if cred_path.exists():
+        try:
+            cred_data = json_module.loads(cred_path.read_text(encoding="utf-8"))
+            if not isinstance(cred_data, dict):
+                raise CannotConnect("凭据文件格式不正确")
+        except (json_module.JSONDecodeError, OSError) as err:
+            raise CannotConnect(f"凭据文件读取失败: {err}") from err
     
-    # 返回用户可读的标题信息
     return {
         "title": "Doubao STT",
         "credential_path": credential_path,
@@ -128,7 +117,6 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         errors: dict[str, str] = {}
         
         if user_input is not None:
-            # 验证新的配置
             try:
                 await validate_input(self.hass, user_input)
             except CannotConnect:
@@ -137,6 +125,9 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 _LOGGER.exception("Unexpected exception")
                 errors["base"] = "unknown"
             else:
+                self.hass.config_entries.async_update_entry(
+                    self.config_entry, data={**self.config_entry.data, **user_input}
+                )
                 return self.async_create_entry(title="", data=user_input)
 
         # 获取当前配置值

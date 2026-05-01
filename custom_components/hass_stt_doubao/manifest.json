@@ -2,8 +2,8 @@
   "domain": "hass_stt_doubao",
   "name": "Doubao Speech to Text",
   "version": "1.0.0",
-  "documentation": "https://github.com/yourusername/hass_stt_doubao",
-  "issue_tracker": "https://github.com/yourusername/hass_stt_doubao/issues",
+  "documentation": "https://github.com/xyzmos/hass_stt_doubao",
+  "issue_tracker": "https://github.com/xyzmos/hass_stt_doubao/issues",
   "dependencies": [],
   "codeowners": ["@xyzmos"],
   "requirements": [
@@ -14,5 +14,5 @@
     "websockets>=12.0"
   ],
   "config_flow": true,
-  "iot_class": "cloud_polling"
+  "iot_class": "cloud_push"
 }

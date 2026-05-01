@@ -1,5 +1,10 @@
-from .asr import (
+from .client import (
     DoubaoASR,
+    transcribe,
+    transcribe_stream,
+    transcribe_realtime,
+)
+from .models import (
     ASRResponse,
     ASRResult,
     ASRAlternative,
@@ -9,9 +14,6 @@ from .asr import (
     ASRError,
     ResponseType,
     AudioChunk,
-    transcribe,
-    transcribe_stream,
-    transcribe_realtime,
 )
 from .config import ASRConfig
 from .ner import NerResponse, NerResult, NerWord, ner, async_ner

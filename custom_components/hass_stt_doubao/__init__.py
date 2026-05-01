@@ -25,26 +25,40 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Doubao Speech-to-Text from a config entry."""
     hass.data.setdefault(DOMAIN, {})
     
-    # 获取配置
-    credential_path = entry.data.get(CONF_CREDENTIAL_PATH, DEFAULT_CREDENTIAL_PATH)
-    enable_punctuation = entry.data.get(CONF_ENABLE_PUNCTUATION, DEFAULT_ENABLE_PUNCTUATION)
+    _update_entry_data(hass, entry)
     
-    # 将相对路径转换为绝对路径
-    if not Path(credential_path).is_absolute():
-        credential_path = hass.config.path(credential_path)
+    entry.async_on_unload(
+        entry.add_update_listener(_async_update_entry_listener)
+    )
     
-    # 存储配置供 STT 实体使用
-    hass.data[DOMAIN][entry.entry_id] = {
-        CONF_CREDENTIAL_PATH: credential_path,
-        CONF_ENABLE_PUNCTUATION: enable_punctuation,
-    }
-    
-    # 加载 STT 平台
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     
     _LOGGER.info("Doubao STT 集成已设置完成")
     
     return True
+
+
+def _update_entry_data(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Store config from entry.options (falling back to entry.data)."""
+    merged = {**entry.data, **entry.options}
+    
+    credential_path = merged.get(CONF_CREDENTIAL_PATH, DEFAULT_CREDENTIAL_PATH)
+    enable_punctuation = merged.get(CONF_ENABLE_PUNCTUATION, DEFAULT_ENABLE_PUNCTUATION)
+    
+    if not Path(credential_path).is_absolute():
+        credential_path = hass.config.path(credential_path)
+    
+    hass.data[DOMAIN][entry.entry_id] = {
+        CONF_CREDENTIAL_PATH: credential_path,
+        CONF_ENABLE_PUNCTUATION: enable_punctuation,
+    }
+
+
+async def _async_update_entry_listener(
+    hass: HomeAssistant, entry: ConfigEntry,
+) -> None:
+    """Handle options update."""
+    _update_entry_data(hass, entry)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
