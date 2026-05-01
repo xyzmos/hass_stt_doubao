@@ -7,8 +7,23 @@ SETTINGS_URL = "https://is.snssdk.com/service/settings/v3/"
 # ASR WebSocket URL
 WEBSOCKET_URL = "wss://frontier-audio-ime-ws.doubao.com/ocean/api/v1/ws"
 
+# 需要通过该接口获取 SAMI TOKEN 来访问 NER 接口
+SAMI_CONFIG_URL = "https://ime.oceancloudapi.com/api/v1/user/get_config"
+
+# 加密协议握手 URL
+HANDSHAKE_URL = "https://keyhub.zijieapi.com/handshake"
+
+# NER 接口 URL
+NER_URL = "https://speech.bytedance.com/api/v3/context/ime/ner"
+
 # 豆包输入法的 APP ID
 AID = 401734
+
+# SAMI 语音相关的服务 APP KEY (写死在客户端的)
+SAMI_APP_KEY = "SYlxZr6LnvBaIVmF"
+
+# HKDF info 字符串 (写死在客户端的)
+HKDF_INFO = b"4e30514609050cd3"
 
 # 应用配置 (豆包输入法)
 APP_CONFIG = {

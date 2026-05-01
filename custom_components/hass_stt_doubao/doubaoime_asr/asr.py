@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum, auto
 import json
 from pathlib import Path
@@ -38,6 +38,59 @@ class ResponseType(Enum):
 
 
 @dataclass
+class ASRWord:
+    """单词级别的识别结果"""
+    word: str
+    start_time: float
+    end_time: float
+
+
+@dataclass
+class OIDecodingInfo:
+    """OI 解码信息"""
+    oi_former_word_num: int = 0
+    oi_latter_word_num: int = 0
+    oi_words: Optional[List] = None
+
+
+@dataclass
+class ASRAlternative:
+    """识别候选结果"""
+    text: str
+    start_time: float
+    end_time: float
+    words: List[ASRWord] = field(default_factory=list)
+    semantic_related_to_prev: Optional[bool] = None
+    oi_decoding_info: Optional[OIDecodingInfo] = None
+
+
+@dataclass
+class ASRResult:
+    """单条识别结果"""
+    text: str
+    start_time: float
+    end_time: float
+    confidence: float = 0.0
+    alternatives: List[ASRAlternative] = field(default_factory=list)
+    is_interim: bool = True
+    is_vad_finished: bool = False
+    index: int = 0
+
+
+@dataclass
+class ASRExtra:
+    """响应附加信息"""
+    audio_duration: Optional[int] = None
+    model_avg_rtf: Optional[float] = None
+    model_send_first_response: Optional[int] = None
+    speech_adaptation_version: Optional[str] = None
+    model_total_process_time: Optional[int] = None
+    packet_number: Optional[int] = None
+    vad_start: Optional[bool] = None
+    req_payload: Optional[dict] = None
+
+
+@dataclass
 class ASRResponse:
     """
     ASR 响应
@@ -50,6 +103,8 @@ class ASRResponse:
     packet_number: int = -1
     error_msg: str = ""
     raw_json: Optional[dict] = None
+    results: List[ASRResult] = field(default_factory=list)
+    extra: Optional[ASRExtra] = None
 
 
 class ASRError(Exception):
@@ -71,6 +126,14 @@ class _SessionState(BaseModel):
     error: Optional[ASRResponse] = None
 
 
+def _create_ssl_context() -> ssl.SSLContext:
+    """
+    在线程中创建并初始化 SSL 上下文，避免阻塞事件循环
+    """
+    ctx = ssl.create_default_context()
+    return ctx
+
+
 class DoubaoASR:
     """
     豆包输入法 ASR 客户端
@@ -86,13 +149,13 @@ class DoubaoASR:
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         pass
 
-    async def _ensure_ssl_context(self):
+    async def _get_ssl_context(self) -> ssl.SSLContext:
         """
-        确保 SSL 上下文已创建（在 executor 中运行避免阻塞）
+        获取预初始化的 SSL 上下文（懒加载，在线程中创建）
         """
         if self._ssl_context is None:
-            loop = asyncio.get_event_loop()
-            self._ssl_context = await loop.run_in_executor(None, ssl.create_default_context)
+            self._ssl_context = await asyncio.to_thread(_create_ssl_context)
+        return self._ssl_context
 
     async def transcribe(self, audio: Union[str, Path, bytes], *, realtime = False, on_interim: Callable[[str], None] = None) -> str:
         """
@@ -127,21 +190,18 @@ class DoubaoASR:
         else:
             pcm_data = audio
 
-        opus_frames = await self._encoder.pcm_to_opus_frames(pcm_data)
+        opus_frames = self._encoder.pcm_to_opus_frames(pcm_data)
         state = _SessionState()
 
-        # 预创建 SSL 上下文避免阻塞
-        await self._ensure_ssl_context()
-        
-        # 获取 WebSocket URL
-        ws_url = await self.config.get_ws_url()
+        ws_url = await self.config.async_ws_url()
+        ssl_context = await self._get_ssl_context()
 
         try:
             async with websockets.connect(
                 ws_url,
                 additional_headers=self.config.headers,
                 open_timeout=self.config.connect_timeout,
-                ssl=self._ssl_context,
+                ssl=ssl_context,
             ) as ws:
                 # 初始化会话
                 async for resp in self._initialize_session(ws, state):
@@ -207,18 +267,15 @@ class DoubaoASR:
         """
         state = _SessionState()
 
-        # 预创建 SSL 上下文避免阻塞
-        await self._ensure_ssl_context()
-        
-        # 获取 WebSocket URL
-        ws_url = await self.config.get_ws_url()
+        ws_url = await self.config.async_ws_url()
+        ssl_context = await self._get_ssl_context()
 
         try:
             async with websockets.connect(
                 ws_url,
                 additional_headers=self.config.headers,
                 open_timeout=self.config.connect_timeout,
-                ssl=self._ssl_context,
+                ssl=ssl_context,
             ) as ws:
                 # 初始化会话
                 async for resp in self._initialize_session(ws, state):
@@ -270,9 +327,6 @@ class DoubaoASR:
         """
         从异步迭代器读取 PCM 数据并实时发送
         """
-        # 预先获取编码器，避免在循环中触发阻塞导入
-        encoder = await self._encoder.get_encoder()
-        
         timestamp_ms = int(time.time() * 1000)
         frame_index = 0
         pcm_buffer = b""
@@ -294,7 +348,7 @@ class DoubaoASR:
                 pcm_buffer = pcm_buffer[bytes_per_frame:]
 
                 # 编码为 Opus
-                opus_frame = encoder.encode(pcm_frame, samples_per_frame)
+                opus_frame = self._encoder.encoder.encode(pcm_frame, samples_per_frame)
 
                 # 确定帧状态（实时模式下不知道最后一帧，使用 FIRST/MIDDLE）
                 if frame_index == 0:
@@ -317,7 +371,7 @@ class DoubaoASR:
             if len(pcm_buffer) < bytes_per_frame:
                 pcm_buffer += b"\x00" * (bytes_per_frame - len(pcm_buffer))
 
-            opus_frame = encoder.encode(pcm_buffer, samples_per_frame)
+            opus_frame = self._encoder.encoder.encode(pcm_buffer, samples_per_frame)
 
             msg = _build_asr_request(
                 opus_frame,
@@ -330,7 +384,7 @@ class DoubaoASR:
             # 没有剩余数据，但需要发送一个 LAST 帧标记
             # 发送一个空的 LAST 帧（静音）
             silent_frame = b"\x00" * bytes_per_frame
-            opus_frame = encoder.encode(silent_frame, samples_per_frame)
+            opus_frame = self._encoder.encoder.encode(silent_frame, samples_per_frame)
 
             msg = _build_asr_request(
                 opus_frame,
@@ -342,14 +396,14 @@ class DoubaoASR:
 
         # FinishSession
         if not state.is_finished:
-            token = await self.config.get_token()
+            token = await self.config.async_get_token()
             await ws.send(_build_finish_session(state.request_id, token))
     
     async def _initialize_session(self, ws: ClientConnection, state: _SessionState) -> AsyncIterator[ASRResponse]:
         """
         初始化 ASR 会话
         """
-        token = await self.config.get_token()
+        token = await self.config.async_get_token()
 
         # StartTask
         await ws.send(_build_start_task(state.request_id, token))
@@ -360,9 +414,9 @@ class DoubaoASR:
         yield parsed
 
         # StartSession
-        session_config = await self.config.get_session_config()
+        session_cfg = await self.config.async_session_config()
         await ws.send(
-            _build_start_session(state.request_id, token, session_config)
+            _build_start_session(state.request_id, token, session_cfg)
         )
         resp = await ws.recv()
         parsed = _parse_response(resp)
@@ -406,7 +460,7 @@ class DoubaoASR:
                 await asyncio.sleep(frame_interval)
         
         # FinishSession
-        token = await self.config.get_token()
+        token = await self.config.async_get_token()
         await ws.send(_build_finish_session(state.request_id, token))
     
     async def _receive_responses(
@@ -499,6 +553,68 @@ def _build_asr_request(
 
 
 
+def _parse_word(data: dict) -> ASRWord:
+    """解析单词数据"""
+    return ASRWord(
+        word=data.get("word", ""),
+        start_time=data.get("start_time", 0.0),
+        end_time=data.get("end_time", 0.0),
+    )
+
+
+def _parse_oi_decoding_info(data: Optional[dict]) -> Optional[OIDecodingInfo]:
+    """解析 OI 解码信息"""
+    if data is None:
+        return None
+    return OIDecodingInfo(
+        oi_former_word_num=data.get("oi_former_word_num", 0),
+        oi_latter_word_num=data.get("oi_latter_word_num", 0),
+        oi_words=data.get("oi_words"),
+    )
+
+
+def _parse_alternative(data: dict) -> ASRAlternative:
+    """解析候选结果"""
+    words = [_parse_word(w) for w in data.get("words", [])]
+    return ASRAlternative(
+        text=data.get("text", ""),
+        start_time=data.get("start_time", 0.0),
+        end_time=data.get("end_time", 0.0),
+        words=words,
+        semantic_related_to_prev=data.get("semantic_related_to_prev"),
+        oi_decoding_info=_parse_oi_decoding_info(data.get("oi_decoding_info")),
+    )
+
+
+def _parse_result(data: dict) -> ASRResult:
+    """解析单条识别结果"""
+    alternatives = [_parse_alternative(a) for a in data.get("alternatives", [])]
+    return ASRResult(
+        text=data.get("text", ""),
+        start_time=data.get("start_time", 0.0),
+        end_time=data.get("end_time", 0.0),
+        confidence=data.get("confidence", 0.0),
+        alternatives=alternatives,
+        is_interim=data.get("is_interim", True),
+        is_vad_finished=data.get("is_vad_finished", False),
+        index=data.get("index", 0),
+    )
+
+
+def _parse_extra(data: dict) -> ASRExtra:
+    """解析附加信息"""
+    return ASRExtra(
+        audio_duration=data.get("audio_duration"),
+        model_avg_rtf=data.get("model_avg_rtf"),
+        model_send_first_response=data.get("model_send_first_response"),
+        speech_adaptation_version=data.get("speech_adaptation_version"),
+        model_total_process_time=data.get("model_total_process_time"),
+        packet_number=data.get("packet_number"),
+        vad_start=data.get("vad_start"),
+        req_payload=data.get("req_payload"),
+    )
+
+
 def _parse_response(data: bytes) -> ASRResponse:
     """解析 ASR 响应 (使用 protobuf)"""
     pb = AsrResponsePb()
@@ -530,20 +646,33 @@ def _parse_response(data: bytes) -> ASRResponse:
     except json.JSONDecodeError:
         return ASRResponse(type=ResponseType.UNKNOWN)
 
-    results = json_data.get("results")
-    extra = json_data.get("extra", {})
+    results_raw = json_data.get("results")
+    extra_raw = json_data.get("extra", {})
+
+    # 解析为强类型
+    parsed_extra = _parse_extra(extra_raw)
 
     # 无 results，可能是心跳包
-    if results is None:
+    if results_raw is None:
         return ASRResponse(
             type=ResponseType.HEARTBEAT,
-            packet_number=extra.get("packet_number", -1),
+            packet_number=extra_raw.get("packet_number", -1),
             raw_json=json_data,
+            extra=parsed_extra,
         )
 
+    # 解析 results
+    parsed_results = [_parse_result(r) for r in results_raw]
+
     # VAD 开始
-    if extra.get("vad_start"):
-        return ASRResponse(type=ResponseType.VAD_START, vad_start=True, raw_json=json_data)
+    if extra_raw.get("vad_start"):
+        return ASRResponse(
+            type=ResponseType.VAD_START,
+            vad_start=True,
+            raw_json=json_data,
+            results=parsed_results,
+            extra=parsed_extra,
+        )
 
     # 解析识别结果
     text = ""
@@ -551,7 +680,7 @@ def _parse_response(data: bytes) -> ASRResponse:
     vad_finished = False
     nonstream_result = False
 
-    for r in results:
+    for r in results_raw:
         if r.get("text"):
             text = r.get("text")
         if r.get("is_interim") is False:
@@ -569,6 +698,8 @@ def _parse_response(data: bytes) -> ASRResponse:
             is_final=True,
             vad_finished=vad_finished,
             raw_json=json_data,
+            results=parsed_results,
+            extra=parsed_extra,
         )
 
     # 中间结果
@@ -577,6 +708,8 @@ def _parse_response(data: bytes) -> ASRResponse:
         text=text,
         is_final=False,
         raw_json=json_data,
+        results=parsed_results,
+        extra=parsed_extra,
     )
 
 

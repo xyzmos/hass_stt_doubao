@@ -1,13 +1,34 @@
-from dataclasses import dataclass, field
 import asyncio
+import base64
+from dataclasses import dataclass, field
 import json
 from pathlib import Path
+import time
 from typing import Optional, Union
 from pydantic import BaseModel
-import aiofiles
 
 from .constants import WEBSOCKET_URL, USER_AGENT, AID
 from .device import DeviceCredentials, register_device, get_asr_token
+from .sami import get_sami_token
+
+
+def _jwt_is_expired(token: str, margin: int = 60) -> bool:
+    """
+    检查 JWT token 是否已过期（提前 margin 秒视为过期）
+    """
+    try:
+        payload_b64 = token.split(".")[1]
+        # JWT base64url 需要补齐 padding
+        padding = 4 - len(payload_b64) % 4
+        if padding != 4:
+            payload_b64 += "=" * padding
+        payload = json.loads(base64.urlsafe_b64decode(payload_b64))
+        exp = payload.get("exp")
+        if exp is None:
+            return False
+        return time.time() >= exp - margin
+    except (IndexError, ValueError, json.JSONDecodeError):
+        return False
 
 
 class _AudioInfo(BaseModel):
@@ -92,10 +113,11 @@ class ASRConfig:
     # 内部状态
     _credentials: Optional[DeviceCredentials] = field(default=None, repr=None)
     _initialized: bool = field(default=False, repr=False)
+    _wave_client: Optional[object] = field(default=None, repr=False)
 
-    async def _load_credentials_from_file(self) -> Optional[DeviceCredentials]:
+    def _load_credentials_from_file_sync(self) -> Optional[DeviceCredentials]:
         """
-        从缓存文件中加载凭据信息（异步）
+        同步的文件读取实现（在线程中调用）
         """
         if self.credential_path is None:
             return None
@@ -105,34 +127,88 @@ class ASRConfig:
             return None
         
         try:
-            async with aiofiles.open(path, 'r', encoding='utf-8') as f:
-                content = await f.read()
-                data = json.loads(content)
+            with open(path, 'r', encoding='utf-8') as f:
+                data = json.loads(f.read())
                 return DeviceCredentials(**data)
 
         except (json.JSONDecodeError, OSError):
             return None
     
-    async def _save_credentials_to_file(self, creds: DeviceCredentials):
+    def _save_credentials_to_file_sync(self, creds: DeviceCredentials):
         """
-        保存凭据至缓存文件（异步）
+        同步的文件写入实现（在线程中调用）
         """
         if self.credential_path is None:
             return
         
         path = Path(self.credential_path).expanduser()
-        
-        # 使用 run_in_executor 来执行同步的 mkdir 操作
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, lambda: path.parent.mkdir(parents=True, exist_ok=True))
+        path.parent.mkdir(parents=True, exist_ok=True)
 
-        async with aiofiles.open(path, 'w', encoding='utf-8') as f:
-            content = json.dumps(creds.model_dump(), indent=2, ensure_ascii=False)
-            await f.write(content)
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(creds.model_dump(), f, indent=2, ensure_ascii=False)
+    
+    async def _load_credentials_from_file(self) -> Optional[DeviceCredentials]:
+        """
+        从缓存文件中加载凭据信息（异步，不阻塞事件循环）
+        """
+        return await asyncio.to_thread(self._load_credentials_from_file_sync)
+    
+    async def _save_credentials_to_file(self, creds: DeviceCredentials):
+        """
+        保存凭据至缓存文件（异步，不阻塞事件循环）
+        """
+        await asyncio.to_thread(self._save_credentials_to_file_sync, creds)
+    
+    def ensure_credentials(self):
+        """
+        确保凭据已初始化（同步版本，仅用于非 async 上下文）
+        """
+        if self._initialized:
+            return
+        
+        # 保存直接通过参数传入的凭据，用于进行覆盖
+        user_device_id = self.device_id
+        user_token = self.token
+
+        # 尝试从文件中加载凭据
+        file_creds = self._load_credentials_from_file_sync()
+        if file_creds:
+            self._credentials = file_creds
+            # 使用文件中的值作为默认
+            if self.device_id is None:
+                self.device_id = file_creds.device_id
+            if self.token is None:
+                self.token = file_creds.token
+        
+        # 如果 device_id 仍为 None, 则注册设备
+        need_save = False
+        if self.device_id is None:
+            self._credentials = register_device()
+            self.device_id = self._credentials.device_id
+            need_save = True
+        
+        # 如果 token 仍为 None, 则获取 token
+        if self.token is None:
+            cdid = self._credentials.cdid if self._credentials else None
+            self.token = get_asr_token(self.device_id, cdid)
+        
+        # 如果指定了 credential_path 且有新注册的凭据，则保存至文件
+        if self.credential_path and need_save and self._credentials:
+            self._credentials.token = self.token
+            self._save_credentials_to_file_sync(self._credentials)
+        
+        # 覆盖用户传入的参数
+        if user_device_id is not None:
+            self.device_id = user_device_id
+        
+        if user_token is not None:
+            self.token = user_token
+
+        self._initialized = True
     
     async def async_ensure_credentials(self):
         """
-        确保凭据已初始化（异步）
+        确保凭据已初始化（异步版本，不阻塞事件循环）
 
         优先级：
         1. 直接传入的 device_id/token 参数（最高优先级）
@@ -148,7 +224,7 @@ class ASRConfig:
         user_device_id = self.device_id
         user_token = self.token
 
-        # 尝试从文件中加载凭据
+        # 尝试从文件中加载凭据（异步）
         file_creds = await self._load_credentials_from_file()
         if file_creds:
             self._credentials = file_creds
@@ -158,23 +234,19 @@ class ASRConfig:
             if self.token is None:
                 self.token = file_creds.token
         
-        # 如果 device_id 仍为 None, 则注册设备
+        # 如果 device_id 仍为 None, 则注册设备（网络 I/O 在线程中执行）
         need_save = False
         if self.device_id is None:
-            # 在 executor 中运行同步的 register_device
-            loop = asyncio.get_event_loop()
-            self._credentials = await loop.run_in_executor(None, register_device)
+            self._credentials = await asyncio.to_thread(register_device)
             self.device_id = self._credentials.device_id
             need_save = True
         
-        # 如果 token 仍为 None, 则获取 token
+        # 如果 token 仍为 None, 则获取 token（网络 I/O 在线程中执行）
         if self.token is None:
             cdid = self._credentials.cdid if self._credentials else None
-            # 在 executor 中运行同步的 get_asr_token
-            loop = asyncio.get_event_loop()
-            self.token = await loop.run_in_executor(None, get_asr_token, self.device_id, cdid)
+            self.token = await asyncio.to_thread(get_asr_token, self.device_id, cdid)
         
-        # 如果指定了 credential_path 且有新注册的凭据，则保存至文件
+        # 如果指定了 credential_path 且有新注册的凭据，则保存至文件（异步）
         if self.credential_path and need_save and self._credentials:
             self._credentials.token = self.token
             await self._save_credentials_to_file(self._credentials)
@@ -188,8 +260,18 @@ class ASRConfig:
 
         self._initialized = True
     
-    async def get_ws_url(self) -> str:
-        """获取 WebSocket URL（异步）"""
+    @property
+    def ws_url(self) -> str:
+        """
+        获取 WebSocket URL（同步版本，需确保凭据已初始化）
+        """
+        self.ensure_credentials()
+        return f'{self.url}?aid={self.aid}&device_id={self.device_id}'
+    
+    async def async_ws_url(self) -> str:
+        """
+        获取 WebSocket URL（异步版本，不阻塞事件循环）
+        """
         await self.async_ensure_credentials()
         return f'{self.url}?aid={self.aid}&device_id={self.device_id}'
     
@@ -201,9 +283,24 @@ class ASRConfig:
             "x-custom-keepalive": "true"
         }
 
-    async def get_session_config(self) -> SessionConfig:
-        """获取会话配置（异步）"""
+    def session_config(self) -> SessionConfig:
+        """
+        获取会话配置（同步版本，需确保凭据已初始化）
+        """
+        self.ensure_credentials()
+        return self._build_session_config()
+    
+    async def async_session_config(self) -> SessionConfig:
+        """
+        获取会话配置（异步版本，不阻塞事件循环）
+        """
         await self.async_ensure_credentials()
+        return self._build_session_config()
+    
+    def _build_session_config(self) -> SessionConfig:
+        """
+        构建会话配置（内部方法，需确保凭据已初始化后调用）
+        """
         audio_info = _AudioInfo(
             channel=self.channels,
             format="speech_opus",
@@ -225,7 +322,114 @@ class ASRConfig:
             extra=extra,
         )
     
-    async def get_token(self) -> str:
-        """获取 token（异步）"""
+    def get_token(self) -> str:
+        """
+        获取 token（同步版本，需确保凭据已初始化）
+        """
+        self.ensure_credentials()
+        return self.token
+
+    async def async_get_token(self) -> str:
+        """
+        获取 token（异步版本，不阻塞事件循环）
+        """
         await self.async_ensure_credentials()
         return self.token
+
+    def _on_wave_session_update(self, session) -> None:
+        """
+        Wave 会话更新时的回调，将新会话同步到凭据缓存
+        """
+        if self._credentials:
+            self._credentials.wave_session = session.to_dict()
+            self._save_credentials_to_file_sync(self._credentials)
+
+    def get_wave_client(self):
+        """
+        获取 WaveClient 实例（同步版本，懒加载，自动管理握手）
+        """
+        from .wave_client import WaveClient, WaveSession
+
+        self.ensure_credentials()
+        if self._wave_client is None:
+            cached_session = None
+            if self._credentials and self._credentials.wave_session:
+                try:
+                    session = WaveSession.from_dict(self._credentials.wave_session)
+                    if not session.is_expired():
+                        cached_session = session
+                except (KeyError, ValueError):
+                    pass
+
+            self._wave_client = WaveClient(
+                self.device_id,
+                self.aid,
+                session=cached_session,
+                on_session_update=self._on_wave_session_update,
+            )
+        return self._wave_client
+
+    async def async_get_wave_client(self):
+        """
+        获取 WaveClient 实例（异步版本，不阻塞事件循环）
+        """
+        from .wave_client import WaveClient, WaveSession
+
+        await self.async_ensure_credentials()
+        if self._wave_client is None:
+            cached_session = None
+            if self._credentials and self._credentials.wave_session:
+                try:
+                    session = WaveSession.from_dict(self._credentials.wave_session)
+                    if not session.is_expired():
+                        cached_session = session
+                except (KeyError, ValueError):
+                    pass
+
+            self._wave_client = WaveClient(
+                self.device_id,
+                self.aid,
+                session=cached_session,
+                on_session_update=self._on_wave_session_update,
+            )
+        return self._wave_client
+
+    def get_sami_token(self) -> str:
+        """
+        获取 SAMI token（同步版本，需确保凭据已初始化）
+        """
+        self.ensure_credentials()
+
+        if (self._credentials
+                and self._credentials.sami_token
+                and not _jwt_is_expired(self._credentials.sami_token)):
+            return self._credentials.sami_token
+
+        cdid = self._credentials.cdid if self._credentials else None
+        sami_token = get_sami_token(cdid)
+
+        if self._credentials:
+            self._credentials.sami_token = sami_token
+            self._save_credentials_to_file_sync(self._credentials)
+
+        return sami_token
+
+    async def async_get_sami_token(self) -> str:
+        """
+        获取 SAMI token（异步版本，不阻塞事件循环）
+        """
+        await self.async_ensure_credentials()
+
+        if (self._credentials
+                and self._credentials.sami_token
+                and not _jwt_is_expired(self._credentials.sami_token)):
+            return self._credentials.sami_token
+
+        cdid = self._credentials.cdid if self._credentials else None
+        sami_token = await asyncio.to_thread(get_sami_token, cdid)
+
+        if self._credentials:
+            self._credentials.sami_token = sami_token
+            await self._save_credentials_to_file(self._credentials)
+
+        return sami_token

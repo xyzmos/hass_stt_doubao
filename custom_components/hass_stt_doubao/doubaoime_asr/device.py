@@ -29,6 +29,14 @@ class DeviceCredentials(BaseModel):
     """
     用于 ASR 的 token
     """
+    sami_token: Optional[str] = None
+    """
+    用于 NER 等 SAMI 服务的 token
+    """
+    wave_session: Optional[dict] = None
+    """
+    Wave 加密会话缓存（序列化后的 WaveSession）
+    """
 
 
 class DeviceRegisterHeaderField(BaseModel):
@@ -273,7 +281,6 @@ def register_device() -> DeviceCredentials:
         params=params.model_dump(),
         json=body.model_dump(),
         headers=headers,
-        verify=False,  # 禁用SSL证书验证以兼容某些环境
     )
 
     response.raise_for_status()
@@ -311,7 +318,6 @@ def get_asr_token(device_id: str, cdid: str) -> str:
         params=params,
         data=body_str,
         headers=headers,
-        verify=False,  # 禁用SSL证书验证以兼容某些环境
     )
     
     response.raise_for_status()
