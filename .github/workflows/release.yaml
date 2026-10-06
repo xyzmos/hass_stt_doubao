@@ -3,6 +3,7 @@ name: Release
 on:
   push:
     tags:
+      - "[0-9]+.[0-9]+.[0-9]+"
       - "v*"
 
 permissions:
@@ -18,6 +19,7 @@ jobs:
       - name: Check tag matches manifest version
         run: |
           TAG="${GITHUB_REF_NAME#v}"
+          # 兼容无 v 前缀的 tag，例如 1.2.0
           MANIFEST_VERSION=$(python3 -c "import json; print(json.load(open('custom_components/hass_stt_doubao/manifest.json'))['version'])")
           if [ "$TAG" != "$MANIFEST_VERSION" ]; then
             echo "::error::Tag $GITHUB_REF_NAME does not match manifest version $MANIFEST_VERSION"

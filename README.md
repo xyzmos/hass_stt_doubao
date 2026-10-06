@@ -141,7 +141,7 @@ custom_components/hass_stt_doubao/
 仓库配置了 tag 自动发布流程（`.github/workflows/release.yaml`）：
 
 1. 更新 `manifest.json` 中的 `version` 字段及本文件的更新日志
-2. 提交后打 tag 推送：`git tag v1.1.0 && git push origin v1.1.0`
+2. 提交后打 tag 推送：`git tag 1.2.0 && git push origin 1.2.0`（也兼容 `v*` 前缀）
 3. CI 会自动校验 tag 与 manifest 版本一致并创建 GitHub Release，HACS 即以该版本向用户推送更新
 
 ## 问题反馈
