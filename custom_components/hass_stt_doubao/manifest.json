@@ -10,5 +10,5 @@
   "issue_tracker": "https://github.com/xyzmos/hass_stt_doubao/issues",
   "requirements": ["miniaudio==1.61", "opuslib==3.0.1"],
   "single_config_entry": true,
-  "version": "1.2.0"
+  "version": "1.2.1"
 }
