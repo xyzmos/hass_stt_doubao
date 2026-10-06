@@ -1,6 +1,6 @@
 {
   "name": "Doubao Speech to Text",
-  "render_readme": true,
-  "domains": ["stt"],
-  "country": ["CN"]
+  "content_in_root": false,
+  "country": ["CN"],
+  "homeassistant": "2024.11.0"
 }

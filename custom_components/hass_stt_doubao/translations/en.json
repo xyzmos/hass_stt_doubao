@@ -19,8 +19,8 @@
       "unknown": "Unexpected error"
     },
     "abort": {
-      "single_instance_allowed": "[%key:common::config_flow::abort::single_instance_allowed%]",
-      "already_configured": "[%key:common::config_flow::abort::already_configured_service%]"
+      "single_instance_allowed": "Only a single configuration entry is allowed",
+      "already_configured": "Service is already configured"
     }
   },
   "options": {

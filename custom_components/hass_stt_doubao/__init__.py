@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 
 from homeassistant.config_entries import ConfigEntry
@@ -9,61 +10,56 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 
 from .const import (
-    DOMAIN,
     CONF_CREDENTIAL_PATH,
     CONF_ENABLE_PUNCTUATION,
     DEFAULT_CREDENTIAL_PATH,
     DEFAULT_ENABLE_PUNCTUATION,
 )
+from .doubaoime_asr import ASRConfig
 
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: list[Platform] = [Platform.STT]
 
+@dataclass
+class DoubaoRuntimeData:
+    """Runtime data resolved from config entry data and options."""
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    credential_path: str
+    enable_punctuation: bool
+    asr_config: ASRConfig
+
+
+type DoubaoConfigEntry = ConfigEntry[DoubaoRuntimeData]
+
+
+async def async_setup_entry(hass: HomeAssistant, entry: DoubaoConfigEntry) -> bool:
     """Set up Doubao Speech-to-Text from a config entry."""
-    hass.data.setdefault(DOMAIN, {})
-    
-    _update_entry_data(hass, entry)
-    
-    entry.async_on_unload(
-        entry.add_update_listener(_async_update_entry_listener)
+    merged = {**entry.data, **entry.options}
+
+    credential_path = merged.get(CONF_CREDENTIAL_PATH, DEFAULT_CREDENTIAL_PATH)
+    if not Path(credential_path).is_absolute():
+        credential_path = hass.config.path(credential_path)
+
+    entry.runtime_data = DoubaoRuntimeData(
+        credential_path=credential_path,
+        enable_punctuation=merged.get(
+            CONF_ENABLE_PUNCTUATION, DEFAULT_ENABLE_PUNCTUATION
+        ),
+        asr_config=ASRConfig(
+            credential_path=credential_path,
+            enable_punctuation=merged.get(
+                CONF_ENABLE_PUNCTUATION, DEFAULT_ENABLE_PUNCTUATION
+            ),
+        ),
     )
-    
+
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    
-    _LOGGER.info("Doubao STT 集成已设置完成")
-    
+
+    _LOGGER.info("Doubao STT 集成加载完成")
     return True
 
 
-def _update_entry_data(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Store config from entry.options (falling back to entry.data)."""
-    merged = {**entry.data, **entry.options}
-    
-    credential_path = merged.get(CONF_CREDENTIAL_PATH, DEFAULT_CREDENTIAL_PATH)
-    enable_punctuation = merged.get(CONF_ENABLE_PUNCTUATION, DEFAULT_ENABLE_PUNCTUATION)
-    
-    if not Path(credential_path).is_absolute():
-        credential_path = hass.config.path(credential_path)
-    
-    hass.data[DOMAIN][entry.entry_id] = {
-        CONF_CREDENTIAL_PATH: credential_path,
-        CONF_ENABLE_PUNCTUATION: enable_punctuation,
-    }
-
-
-async def _async_update_entry_listener(
-    hass: HomeAssistant, entry: ConfigEntry,
-) -> None:
-    """Handle options update."""
-    _update_entry_data(hass, entry)
-
-
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_unload_entry(hass: HomeAssistant, entry: DoubaoConfigEntry) -> bool:
     """Unload a config entry."""
-    if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
-        hass.data[DOMAIN].pop(entry.entry_id)
-    
-    return unload_ok
+    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)

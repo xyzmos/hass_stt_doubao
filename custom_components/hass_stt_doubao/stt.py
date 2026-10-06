@@ -1,7 +1,6 @@
 """Support for Doubao Speech-to-Text service."""
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import AsyncIterable
 
@@ -16,49 +15,40 @@ from homeassistant.components.stt import (
     SpeechResultState,
     SpeechToTextEntity,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import (
-    DOMAIN,
-    CONF_CREDENTIAL_PATH,
-    CONF_ENABLE_PUNCTUATION,
-    SUPPORTED_LANGUAGES,
-)
-from .doubaoime_asr import ASRConfig, ASRError, DoubaoASR, ResponseType
+from . import DoubaoConfigEntry
+from .const import DOMAIN, SUPPORTED_LANGUAGES
+from .doubaoime_asr import ASRError, DoubaoASR, ResponseType
 
 _LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    config_entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    config_entry: DoubaoConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up Doubao STT from a config entry."""
-    config_data = hass.data[DOMAIN][config_entry.entry_id]
-    
-    async_add_entities(
-        [DoubaoSTTEntity(config_entry, config_data)],
-        True,
-    )
+    async_add_entities([DoubaoSTTEntity(config_entry)])
 
 
 class DoubaoSTTEntity(SpeechToTextEntity):
     """Doubao Speech-to-Text entity."""
 
-    def __init__(
-        self,
-        config_entry: ConfigEntry,
-        config_data: dict,
-    ) -> None:
+    _attr_has_entity_name = True
+    _attr_name = None
+
+    def __init__(self, config_entry: DoubaoConfigEntry) -> None:
         """Initialize Doubao STT entity."""
-        self._config_entry = config_entry
-        self._credential_path = config_data[CONF_CREDENTIAL_PATH]
-        self._enable_punctuation = config_data[CONF_ENABLE_PUNCTUATION]
-        self._attr_name = "Doubao STT"
-        self._attr_unique_id = f"{config_entry.entry_id}_stt"
+        self._asr_config = config_entry.runtime_data.asr_config
+        self._attr_unique_id = config_entry.entry_id
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, config_entry.entry_id)},
+            entry_type=DeviceEntryType.SERVICE,
+        )
 
     @property
     def supported_languages(self) -> list[str]:
@@ -94,11 +84,11 @@ class DoubaoSTTEntity(SpeechToTextEntity):
         self, metadata: SpeechMetadata, stream: AsyncIterable[bytes]
     ) -> SpeechResult:
         """Process an audio stream to STT service.
-        
+
         Args:
             metadata: Metadata about the audio stream
             stream: Async iterable of audio chunks (PCM 16-bit, 16kHz, mono)
-            
+
         Returns:
             SpeechResult with the transcribed text
         """
@@ -109,19 +99,10 @@ class DoubaoSTTEntity(SpeechToTextEntity):
             metadata.codec,
             metadata.sample_rate,
         )
-        
-        # 创建 ASR 配置
-        config = ASRConfig(
-            credential_path=self._credential_path,
-            enable_punctuation=self._enable_punctuation,
-            sample_rate=16000,  # HA 固定使用 16kHz
-            channels=1,  # HA 固定使用单声道
-        )
-        
+
         try:
-            # 使用 DoubaoASR 进行实时识别
             final_text = ""
-            async with DoubaoASR(config) as asr:
+            async with DoubaoASR(self._asr_config) as asr:
                 async for response in asr.transcribe_realtime(stream):
                     if response.type == ResponseType.FINAL_RESULT:
                         final_text = response.text
@@ -134,27 +115,27 @@ class DoubaoSTTEntity(SpeechToTextEntity):
                             text=None,
                             result=SpeechResultState.ERROR,
                         )
-            
+
             if not final_text:
                 _LOGGER.warning("识别完成但未获得最终结果")
                 return SpeechResult(
                     text=None,
                     result=SpeechResultState.ERROR,
                 )
-            
-            _LOGGER.info("语音识别成功: %s", final_text)
+
+            _LOGGER.debug("语音识别成功: %s", final_text)
             return SpeechResult(
                 text=final_text,
                 result=SpeechResultState.SUCCESS,
             )
-            
+
         except ASRError as err:
             _LOGGER.error("Doubao ASR 识别失败: %s", err)
             return SpeechResult(
                 text=None,
                 result=SpeechResultState.ERROR,
             )
-        except Exception as err:  # pylint: disable=broad-except
+        except Exception:  # pylint: disable=broad-except
             _LOGGER.exception("处理音频流时发生未知错误")
             return SpeechResult(
                 text=None,

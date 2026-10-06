@@ -96,6 +96,9 @@ class DoubaoASR:
                         except asyncio.TimeoutError:
                             break
                 finally:
+                    for task in (send_task, recv_task):
+                        if not task.done():
+                            task.cancel()
                     results = await asyncio.gather(
                         send_task, recv_task, return_exceptions=True,
                     )
