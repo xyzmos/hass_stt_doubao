@@ -1,6 +1,6 @@
 {
   "domain": "hass_stt_doubao",
-  "name": "Doubao Speech to Text",
+  "name": "豆包语音识别",
   "codeowners": ["@xyzmos"],
   "config_flow": true,
   "dependencies": [],

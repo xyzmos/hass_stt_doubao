@@ -37,7 +37,7 @@ jobs:
             ### 安装方式
             1. 在 HACS 中添加自定义仓库 `https://github.com/xyzmos/hass_stt_doubao`
             2. 类别选择 **Integration**
-            3. 搜索 **Doubao Speech to Text** 并下载
+            3. 搜索 **豆包语音识别** 并下载
             4. 重启 Home Assistant
 
             ### 更新内容

@@ -91,7 +91,7 @@ class DoubaoConfigFlow(ConfigFlow, domain=DOMAIN):
                 errors["base"] = "unknown"
             else:
                 return self.async_create_entry(
-                    title="Doubao STT",
+                    title="豆包语音识别",
                     data=user_input,
                 )
 

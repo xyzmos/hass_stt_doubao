@@ -1,4 +1,4 @@
-# Doubao Speech-to-Text for Home Assistant
+# 豆包语音识别 for Home Assistant
 
 [![HACS 自定义仓库](https://img.shields.io/badge/HACS-自定义集成-orange.svg)](https://github.com/hacs/integration)
 [![hacs 校验](https://github.com/xyzmos/hass_stt_doubao/actions/workflows/validate.yml/badge.svg)](https://github.com/xyzmos/hass_stt_doubao/actions/workflows/validate.yml)
@@ -31,7 +31,7 @@
 
 1. 确保已在 Home Assistant 中安装 HACS
 2. 点击上方按钮，或进入 HACS → 右上角菜单 → **自定义仓库**，添加 `https://github.com/xyzmos/hass_stt_doubao`，类别选择 **集成**
-3. 搜索 "Doubao Speech to Text" 并下载
+3. 搜索 "豆包语音识别" 并下载
 4. 重启 Home Assistant
 
 ### 方法 2: 手动安装
@@ -42,7 +42,7 @@
 ## 配置
 
 1. 进入 Home Assistant **设置 → 设备与服务**
-2. 点击右下角 **添加集成**，搜索 "Doubao Speech to Text"
+2. 点击右下角 **添加集成**，搜索 "豆包语音识别"
 3. 按照向导完成配置：
    - **凭据文件路径**：默认 `doubao_credentials.json`（相对于 HA 配置目录，绝对路径亦可）
    - **启用标点符号**：默认启用

@@ -40,6 +40,8 @@ class DoubaoSTTEntity(SpeechToTextEntity):
 
     _attr_has_entity_name = True
     _attr_name = None
+    # 中文设备名 slugify 后为空，显式指定保证 entity_id 为 stt.doubao_stt
+    _attr_suggested_object_id = "doubao_stt"
 
     def __init__(self, config_entry: DoubaoConfigEntry) -> None:
         """Initialize Doubao STT entity."""
