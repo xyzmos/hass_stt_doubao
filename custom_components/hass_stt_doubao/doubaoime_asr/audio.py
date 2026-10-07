@@ -1,7 +1,12 @@
+import warnings
 from typing import Optional, List, Union
 from pathlib import Path
 
-import opuslib
+with warnings.catch_warnings():
+    # opuslib<=3.0.1 在 Python 3.13+ 会抛 SyntaxWarning（is not 0），导入时抑制
+    warnings.simplefilter("ignore", SyntaxWarning)
+    import opuslib
+
 import miniaudio
 
 from .config import ASRConfig
