@@ -1,0 +1,113 @@
+# GitCode 流水线：推送 tag 后自动创建 Release，并上传平铺 zip 附件
+# 语法参考：https://docs.gitcode.com/docs/help/home/org_project/pipeline/core-concepts/workflow-job-step-action/
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+      - '[0-9]*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 要发布的 tag（如 v1.2.3）
+        required: true
+        type: string
+
+permissions:
+  repository: write
+
+env:
+  DOMAIN: hass_stt_doubao
+
+jobs:
+  release:
+    name: 打包并发布 Release
+    runs-on: [ubuntu-latest, x64, small]
+    steps:
+      - name: Checkout
+        uses: checkout
+
+      - name: 解析 tag 与版本号
+        run: |
+          set -eu
+          TAG="${{ inputs.tag }}"
+          [ -n "$TAG" ] || TAG="$ATOMGIT_REF_NAME"
+          VERSION="${TAG#v}"
+          {
+            echo "TAG=$TAG"
+            echo "VERSION=$VERSION"
+            echo "DOMAIN_DIR=custom_components/$DOMAIN"
+            echo "ZIP_NAME=$DOMAIN.zip"
+          } >> "$ATOMGIT_ENV"
+          echo "发布 $DOMAIN v$VERSION（tag: $TAG）"
+
+      - name: 同步 manifest.json 版本
+        run: |
+          set -eu
+          MANIFEST="$DOMAIN_DIR/manifest.json"
+          CURRENT=$(jq -r '.version' "$MANIFEST")
+          if [ "$CURRENT" != "$VERSION" ]; then
+            jq --arg v "$VERSION" '.version = $v' "$MANIFEST" > manifest.tmp
+            mv manifest.tmp "$MANIFEST"
+            echo "manifest.json 版本 $CURRENT -> $VERSION（仅本次打包生效，不提交）"
+          fi
+
+      - name: 打包平铺 zip
+        run: |
+          set -eu
+          cd "$DOMAIN_DIR"
+          zip -r "../../$ZIP_NAME" . -x "__pycache__/*" -x "*.pyc" -x "*.pyo"
+          cd ../..
+          unzip -l "$ZIP_NAME" | grep -q "manifest.json" || { echo "zip 根缺少 manifest.json"; exit 1; }
+          ls -lh "$ZIP_NAME"
+
+      - name: 创建或更新 Release
+        run: |
+          set -eu
+          OWNER="${ATOMGIT_REPOSITORY%%/*}"
+          REPO="${ATOMGIT_REPOSITORY##*/}"
+          API="${ATOMGIT_API_URL}/api/v5/repos/${OWNER}/${REPO}/releases"
+          BODY=$(cat <<'EOF'
+          ## 豆包语音识别
+
+          Home Assistant 集成，详见 [README](README.md)。
+
+          ### 安装方式
+          - HACS：添加自定义仓库后搜索「豆包语音识别」安装
+          - 手动：解压 `hass_stt_doubao.zip` 至 `config/custom_components/`
+          EOF
+          )
+          if curl -sS -f -o /dev/null "${API}/tags/${TAG}?access_token=${ATOMGIT_TOKEN}"; then
+            METHOD=PATCH
+            URL="${API}/${TAG}?access_token=${ATOMGIT_TOKEN}"
+            jq -n --arg name "$TAG" --arg body "$BODY" \
+              '{name: $name, body: $body, release_status: "latest"}' > payload.json
+          else
+            METHOD=POST
+            URL="${API}?access_token=${ATOMGIT_TOKEN}"
+            jq -n --arg tag "$TAG" --arg name "$TAG" --arg body "$BODY" \
+              '{tag_name: $tag, name: $name, body: $body, release_status: "latest"}' > payload.json
+          fi
+          curl -sS -f -X "$METHOD" "$URL" -H 'Content-Type: application/json' \
+            --data-binary @payload.json > release.json
+          jq -r '"Release \(.name) 已发布：\(.html_url // "")"' release.json
+          echo "Release $TAG 已就绪（$METHOD）" >> "$ATOMGIT_STEP_SUMMARY"
+
+      - name: 上传 zip 附件
+        run: |
+          set -eu
+          OWNER="${ATOMGIT_REPOSITORY%%/*}"
+          REPO="${ATOMGIT_REPOSITORY##*/}"
+          META=$(curl -sS -f -G \
+            "${ATOMGIT_API_URL}/api/v5/repos/${OWNER}/${REPO}/releases/${TAG}/upload_url" \
+            --data-urlencode "access_token=${ATOMGIT_TOKEN}" \
+            --data-urlencode "file_name=${ZIP_NAME}")
+          echo "$META" > upload.json
+          {
+            echo "url = \"$(jq -r '.url' upload.json)\""
+            jq -r '.headers | to_entries[] | "header = \"\(.key): \(.value)\""' upload.json
+            echo "upload-file = \"${ZIP_NAME}\""
+          } > upload.cfg
+          curl -sS -f -K upload.cfg -o /dev/null
+          echo "$ZIP_NAME 已上传到 Release $TAG"
